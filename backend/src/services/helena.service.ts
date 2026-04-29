@@ -541,10 +541,15 @@ async function getClassificacoes(filtro: FiltroHelena = {}): Promise<Classificac
   };
 }
 
+function invalidateRealtimeCache(): void {
+  cacheRealtime = null;
+}
+
 export const helenaService = {
   getKPIsTempoReal,
   getKPIsFinalizados,
   getSessoes,
   getClassificacoes,
   getDepartamentos,
+  invalidateRealtimeCache,
 };

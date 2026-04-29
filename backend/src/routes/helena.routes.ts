@@ -4,6 +4,16 @@ import { FiltroHelena, StatusSessao } from '../types/helena.types';
 
 const router = Router();
 
+// ── SSE: lista de clientes conectados ──
+const sseClients = new Set<Response>();
+
+function broadcastSSE(data: object): void {
+  const message = `data: ${JSON.stringify(data)}\n\n`;
+  for (const client of sseClients) {
+    client.write(message);
+  }
+}
+
 function getFiltroHelenaFromQuery(req: Request): FiltroHelena {
   const { dataInicio, dataFim, status } = req.query;
   return {
@@ -12,6 +22,49 @@ function getFiltroHelenaFromQuery(req: Request): FiltroHelena {
     ...(status && { status: status as StatusSessao }),
   };
 }
+
+// ── GET /events — Server-Sent Events (frontend se conecta aqui) ──
+router.get('/events', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
+  sseClients.add(res);
+  console.log(`[Helena SSE] Cliente conectado. Total: ${sseClients.size}`);
+
+  const heartbeat = setInterval(() => {
+    res.write(':ping\n\n');
+  }, 30_000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    sseClients.delete(res);
+    console.log(`[Helena SSE] Cliente desconectado. Total: ${sseClients.size}`);
+  });
+});
+
+// ── POST /webhook — recebe eventos da Helena CRM ──
+router.post('/webhook', (req: Request, res: Response) => {
+  const secret = process.env.WEBHOOK_SECRET;
+  if (secret && req.query.secret !== secret) {
+    console.warn('[Helena Webhook] Tentativa com secret inválido');
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const evento = req.body;
+  const tipoEvento = evento?.event ?? evento?.type ?? 'desconhecido';
+  console.log(`[Helena Webhook] Evento recebido: ${tipoEvento} | payload: ${JSON.stringify(evento).slice(0, 300)}`);
+
+  helenaService.invalidateRealtimeCache();
+
+  broadcastSSE({ type: 'webhook', event: tipoEvento, ts: Date.now() });
+
+  res.status(200).json({ ok: true, event: tipoEvento });
+});
 
 router.get('/realtime', async (_req: Request, res: Response) => {
   console.log('[Helena API] GET /realtime chamado às', new Date().toLocaleTimeString('pt-BR'));

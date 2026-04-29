@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../services/api';
 import { KPIsTempoReal, KPIsFinalizadosHelena, ClassificacoesHelenaResponse } from '../types';
 
-const INTERVALO_REALTIME_MS = 5_000;
+// Polling de fallback: 30s quando SSE está ativo, 5s quando não está
+const INTERVALO_FALLBACK_MS = 30_000;
+const INTERVALO_SEM_SSE_MS = 5_000;
 
 export function useHelena() {
   const [realtime, setRealtime] = useState<KPIsTempoReal | null>(null);
@@ -16,9 +18,11 @@ export function useHelena() {
   const [errorClassificacoes, setErrorClassificacoes] = useState<string | null>(null);
   const [pesquisadoFinalizados, setPesquisadoFinalizados] = useState(false);
   const [pesquisadoClassificacoes, setPesquisadoClassificacoes] = useState(false);
+  const [sseAtivo, setSseAtivo] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchingRef = useRef(false);
   const visibleRef = useRef(true);
+  const sseAtivoRef = useRef(false);
 
   const fetchRealtime = useCallback(async () => {
     if (fetchingRef.current) return;
@@ -39,6 +43,7 @@ export function useHelena() {
 
   const scheduleNext = useCallback(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    const intervalo = sseAtivoRef.current ? INTERVALO_FALLBACK_MS : INTERVALO_SEM_SSE_MS;
     timeoutRef.current = setTimeout(async () => {
       if (!visibleRef.current) {
         scheduleNext();
@@ -46,7 +51,7 @@ export function useHelena() {
       }
       await fetchRealtime();
       scheduleNext();
-    }, INTERVALO_REALTIME_MS);
+    }, intervalo);
   }, [fetchRealtime]);
 
   const fetchFinalizados = useCallback(async (dataInicio: string, dataFim: string) => {
@@ -76,6 +81,51 @@ export function useHelena() {
       setLoadingClassificacoes(false);
     }
   }, []);
+
+  // ── SSE: recebe push da Helena via webhook ──
+  useEffect(() => {
+    let es: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function conectarSSE() {
+      es = new EventSource('/api/helena/events');
+
+      es.onopen = () => {
+        console.log('[Helena SSE] ✅ Conectado');
+        sseAtivoRef.current = true;
+        setSseAtivo(true);
+      };
+
+      es.onmessage = (evt) => {
+        try {
+          const dados = JSON.parse(evt.data);
+          if (dados.type === 'webhook') {
+            console.log(`[Helena SSE] 🔔 Evento recebido: ${dados.event} — atualizando...`);
+            fetchRealtime();
+          }
+        } catch {
+          // ignora mensagens malformadas
+        }
+      };
+
+      es.onerror = () => {
+        console.warn('[Helena SSE] ⚠️ Conexão perdida. Reconectando em 10s...');
+        sseAtivoRef.current = false;
+        setSseAtivo(false);
+        es?.close();
+        reconnectTimer = setTimeout(conectarSSE, 10_000);
+      };
+    }
+
+    conectarSSE();
+
+    return () => {
+      es?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      sseAtivoRef.current = false;
+      setSseAtivo(false);
+    };
+  }, [fetchRealtime]);
 
   useEffect(() => {
     fetchRealtime();
@@ -107,6 +157,7 @@ export function useHelena() {
     errorClassificacoes,
     pesquisadoFinalizados,
     pesquisadoClassificacoes,
+    sseAtivo,
     fetchRealtime,
     fetchFinalizados,
     fetchClassificacoes,
