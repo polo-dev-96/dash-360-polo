@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../services/api';
 import { KPIsTempoReal, KPIsFinalizadosHelena, ClassificacoesHelenaResponse } from '../types';
 
-// Polling de fallback: 30s quando SSE está ativo, 5s quando não está
+// Polling de fallback: 30s
 const INTERVALO_FALLBACK_MS = 30_000;
-const INTERVALO_SEM_SSE_MS = 5_000;
+const INTERVALO_SEM_SSE_MS = 30_000;
 
 export function useHelena() {
   const [realtime, setRealtime] = useState<KPIsTempoReal | null>(null);
@@ -99,8 +99,11 @@ export function useHelena() {
       es.onmessage = (evt) => {
         try {
           const dados = JSON.parse(evt.data);
-          if (dados.type === 'webhook') {
-            console.log(`[Helena SSE] 🔔 Evento recebido: ${dados.event} — atualizando...`);
+          if (dados.type === 'realtime' && dados.data) {
+            console.log(`[Helena SSE] 📊 KPIs via webhook: emEspera=${dados.data.emEspera} emAtendimento=${dados.data.emAtendimento}`);
+            setRealtime(dados.data);
+          } else if (dados.type === 'webhook') {
+            console.log(`[Helena SSE] 🔔 Evento genérico recebido: ${dados.event} — consultando API...`);
             fetchRealtime();
           }
         } catch {

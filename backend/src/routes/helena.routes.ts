@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { helenaService } from '../services/helena.service';
-import { FiltroHelena, StatusSessao } from '../types/helena.types';
+import { FiltroHelena, StatusSessao, SessaoHelena, KPIsTempoReal } from '../types/helena.types';
 
 const router = Router();
 
@@ -47,7 +47,7 @@ router.get('/events', (req: Request, res: Response) => {
 });
 
 // ── POST /webhook — recebe eventos da Helena CRM ──
-router.post('/webhook', (req: Request, res: Response) => {
+router.post('/webhook', async (req: Request, res: Response) => {
   const secret = process.env.WEBHOOK_SECRET;
   if (secret && req.query.secret !== secret) {
     console.warn('[Helena Webhook] Tentativa com secret inválido');
@@ -55,15 +55,31 @@ router.post('/webhook', (req: Request, res: Response) => {
     return;
   }
 
-  const evento = req.body;
-  const tipoEvento = evento?.event ?? evento?.type ?? 'desconhecido';
-  console.log(`[Helena Webhook] Evento recebido: ${tipoEvento} | payload: ${JSON.stringify(evento).slice(0, 300)}`);
+  try {
+    const resultado = await helenaService.processarWebhook(req.body);
+    
+    // Transmitir via SSE se houver dados úteis
+    if (resultado.type === 'realtime') {
+      broadcastSSE({ 
+        type: 'realtime', 
+        source: 'webhook', 
+        event: resultado.event, 
+        data: resultado.data, 
+        ts: Date.now() 
+      });
+    } else {
+      broadcastSSE({ 
+        type: 'webhook', 
+        event: resultado.event, 
+        ts: Date.now() 
+      });
+    }
 
-  helenaService.invalidateRealtimeCache();
-
-  broadcastSSE({ type: 'webhook', event: tipoEvento, ts: Date.now() });
-
-  res.status(200).json({ ok: true, event: tipoEvento });
+    res.status(200).json({ ok: true, event: resultado.event });
+  } catch (error) {
+    console.error('[Helena Webhook] Erro ao processar:', error);
+    res.status(200).json({ ok: true, error: 'Internal processing error' });
+  }
 });
 
 router.get('/realtime', async (_req: Request, res: Response) => {

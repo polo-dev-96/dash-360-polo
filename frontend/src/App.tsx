@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from './components/ui/select'
 import { useKPIs } from './hooks/useKPIs'
 import { useHelena } from './hooks/useHelena'
@@ -1110,7 +1110,7 @@ function App() {
                     <h2 className="text-base font-bold text-gray-900">Atendimentos em Tempo Real</h2>
                     <span className="flex items-center gap-1 bg-green-100 text-green-700 text-xs font-semibold px-2 py-0.5 rounded-full">
                       <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse inline-block" />
-                      Ao vivo · atualiza a cada 5s
+                      Ao vivo · atualiza a cada 30s
                     </span>
                   </div>
                   <div className="flex items-center gap-3">

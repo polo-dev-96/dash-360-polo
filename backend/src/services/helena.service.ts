@@ -191,6 +191,110 @@ function resolverNomeCanal(canais: Map<string, { name: string; number: string | 
 let cacheRealtime: { data: KPIsTempoReal; at: number } | null = null;
 const TTL_REALTIME_MS = 2_000; // 2 segundos (apenas para evitar requisições duplicadas do mesmo tick)
 
+// ── Cache de Sessões Ativas (Alimentado por API e Webhooks) ──
+const sessoesAtivasCache = new Map<string, SessaoHelena>();
+let cacheSessoesAtivasIniciado = false;
+let lastApiSyncAt = 0;
+const SYNC_INTERVAL_MS = 60_000; // Sincronizar com API a cada 1 minuto
+
+const STATUS_EM_ESPERA: StatusSessao[] = ['UNDEFINED', 'STARTED', 'PENDING'];
+const STATUS_EM_ATENDIMENTO: StatusSessao[] = ['IN_PROGRESS'];
+const STATUS_ATIVOS: StatusSessao[] = [...STATUS_EM_ESPERA, ...STATUS_EM_ATENDIMENTO];
+const STATUS_FINALIZADOS: StatusSessao[] = ['COMPLETED', 'HIDDEN'];
+
+function isSessaoAtiva(s: SessaoHelena): boolean {
+  return STATUS_ATIVOS.includes(s.status);
+}
+
+function isEmEspera(s: SessaoHelena): boolean {
+  return STATUS_EM_ESPERA.includes(s.status);
+}
+
+function isEmAtendimento(s: SessaoHelena): boolean {
+  return STATUS_EM_ATENDIMENTO.includes(s.status);
+}
+
+async function computarKPIsFromCache(): Promise<KPIsTempoReal> {
+  const todasSessoes = Array.from(sessoesAtivasCache.values());
+  const emEspera = todasSessoes.filter(isEmEspera).length;
+  const emAtendimento = todasSessoes.filter(isEmAtendimento).length;
+
+  const departamentos = await getDepartamentos();
+  const porEquipeMap = new Map<string, number>();
+
+  for (const s of todasSessoes) {
+    const equipe = resolverNomeEquipe(departamentos, s.departmentId);
+    porEquipeMap.set(equipe, (porEquipeMap.get(equipe) ?? 0) + 1);
+  }
+
+  return {
+    emEspera,
+    emAtendimento,
+    total: emEspera + emAtendimento,
+    porEquipe: Array.from(porEquipeMap.entries())
+      .map(([equipe, total]) => ({ equipe, total }))
+      .sort((a, b) => b.total - a.total),
+    atualizadoEm: new Date().toISOString(),
+  };
+}
+
+// ── Extrair sessão do payload do webhook ──
+function extrairSessaoDoWebhook(body: any): SessaoHelena | null {
+  if (!body || typeof body !== 'object') return null;
+
+  const candidatos = [
+    body.content,
+    body.data,
+    body.session,
+    body.payload,
+    body.sessao,
+    body.item,
+    body.id && body.status ? body : null,
+  ];
+
+  for (const c of candidatos) {
+    if (c && typeof c === 'object' && c.id && c.status) {
+      const statusConhecidos: StatusSessao[] = [...STATUS_ATIVOS, ...STATUS_FINALIZADOS];
+      if (statusConhecidos.includes(c.status)) {
+        return c as SessaoHelena;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function processarWebhook(body: any): Promise<{ type: string; data?: KPIsTempoReal; event: string }> {
+  const evento = body;
+  const tipoEvento = evento?.eventType ?? evento?.event ?? evento?.type ?? 'desconhecido';
+  console.log(`[Helena Service] Processando webhook: ${tipoEvento}`);
+
+  // Se o cache não estiver iniciado, vamos iniciar antes de processar
+  if (!cacheSessoesAtivasIniciado) {
+    console.log('[Helena Service] Cache não iniciado. Carregando dados iniciais antes de processar webhook...');
+    await getKPIsTempoReal();
+  }
+
+  const sessao = extrairSessaoDoWebhook(evento);
+  if (sessao) {
+    console.log(`[Helena Service] Sessão webhook: id=${sessao.id} status=${sessao.status}`);
+
+    if (isSessaoAtiva(sessao)) {
+      sessoesAtivasCache.set(sessao.id, sessao);
+      console.log(`[Helena Service] Cache atualizado: +${sessao.id} | total=${sessoesAtivasCache.size}`);
+    } else if (STATUS_FINALIZADOS.includes(sessao.status)) {
+      const removido = sessoesAtivasCache.delete(sessao.id);
+      console.log(`[Helena Service] Cache atualizado: -${sessao.id} | removido=${removido} | total=${sessoesAtivasCache.size}`);
+    }
+
+    const kpis = await computarKPIsFromCache();
+    invalidateRealtimeCache();
+    return { type: 'realtime', data: kpis, event: tipoEvento };
+  }
+
+  return { type: 'webhook', event: tipoEvento };
+}
+
 const TAMANHO_PAGINA = 100;
 
 async function buscarPagina(
@@ -289,37 +393,24 @@ async function buscarSessoesComLimite(
   return todas;
 }
 
-const STATUS_EM_ESPERA: StatusSessao[] = ['UNDEFINED', 'STARTED', 'PENDING'];
-const STATUS_EM_ATENDIMENTO: StatusSessao[] = ['IN_PROGRESS'];
-const STATUS_ATIVOS: StatusSessao[] = [...STATUS_EM_ESPERA, ...STATUS_EM_ATENDIMENTO];
-const STATUS_FINALIZADOS: StatusSessao[] = ['COMPLETED', 'HIDDEN'];
-
-function isSessaoAtiva(s: SessaoHelena): boolean {
-  return STATUS_ATIVOS.includes(s.status);
-}
-
-function isEmEspera(s: SessaoHelena): boolean {
-  return STATUS_EM_ESPERA.includes(s.status);
-}
-
-function isEmAtendimento(s: SessaoHelena): boolean {
-  return STATUS_EM_ATENDIMENTO.includes(s.status);
-}
-
 async function getKPIsTempoReal(): Promise<KPIsTempoReal> {
   const agora = Date.now();
+  
+  // Se o cache já foi iniciado e o TTL de realtime não expirou, retorna cache rápido
   if (cacheRealtime && agora - cacheRealtime.at < TTL_REALTIME_MS) {
     return cacheRealtime.data;
   }
 
-  let emEspera = 0;
-  let emAtendimento = 0;
-  let porEquipeMap = new Map<string, number>();
+  // Se o cache já foi iniciado e ainda não deu tempo de sincronizar com a API novamente, 
+  // apenas computa a partir do que temos no cache (que foi atualizado pelos webhooks)
+  if (cacheSessoesAtivasIniciado && agora - lastApiSyncAt < SYNC_INTERVAL_MS) {
+    const resultado = await computarKPIsFromCache();
+    cacheRealtime = { data: resultado, at: agora };
+    return resultado;
+  }
 
   try {
-    // ESTRATÉGIA NOVA: buscar sessões ativas em uma única chamada
-    // A API Helena pode ignorar filtro por status, então buscamos sem filtro
-    // e classificamos manualmente. Limitamos a 200 itens (2 páginas) para velocidade.
+    console.log('[Helena Service] Sincronizando sessões ativas com a API...');
     const MAX_ITENS_REALTIME = 200;
     const todasSessoes: SessaoHelena[] = [];
     let pagina = 1;
@@ -333,52 +424,35 @@ async function getKPIsTempoReal(): Promise<KPIsTempoReal> {
         `[Helena CRM] realtime página ${pagina}: recebidos=${resp.items?.length ?? 0} ativos=${itens.length} acumulado=${todasSessoes.length}`
       );
 
-      // Log dos primeiros IDs para rastreamento
-      if (pagina === 1 && resp.items && resp.items.length > 0) {
-        const amostra = resp.items.slice(0, 5).map(s => `${s.id}:${s.status}`).join(', ');
-        console.log(`[Helena CRM] realtime amostra: ${amostra}...`);
-      }
-
       if (!resp.hasMorePages || (resp.items?.length ?? 0) === 0) break;
       pagina++;
     }
 
-    // Contagem manual por status (não confiamos no totalItems com filtro)
-    emEspera = todasSessoes.filter(isEmEspera).length;
-    emAtendimento = todasSessoes.filter(isEmAtendimento).length;
-
-    const contagemPorStatus = new Map<StatusSessao, number>();
+    // Sincronizar com o cache de sessões ativas
+    sessoesAtivasCache.clear();
     for (const s of todasSessoes) {
-      contagemPorStatus.set(s.status, (contagemPorStatus.get(s.status) ?? 0) + 1);
+      sessoesAtivasCache.set(s.id, s);
     }
-    console.log(
-      `[Helena CRM] realtime resultado: emEspera=${emEspera} emAtendimento=${emAtendimento} ` +
-      `totalAtivos=${todasSessoes.length} | porStatus: ` +
-      Array.from(contagemPorStatus.entries()).map(([st, c]) => `${st}=${c}`).join(', ')
-    );
+    cacheSessoesAtivasIniciado = true;
+    lastApiSyncAt = agora;
+    console.log(`[Helena Service] Cache de sessões ativas sincronizado: ${sessoesAtivasCache.size} itens`);
 
-    const departamentos = await getDepartamentos();
-    for (const sessao of todasSessoes) {
-      const equipe = resolverNomeEquipe(departamentos, sessao.departmentId);
-      porEquipeMap.set(equipe, (porEquipeMap.get(equipe) ?? 0) + 1);
-    }
+    const resultado = await computarKPIsFromCache();
+    cacheRealtime = { data: resultado, at: agora };
+    return resultado;
   } catch (err: any) {
     console.error('[Helena CRM] Erro em getKPIsTempoReal:', err?.message ?? err);
-    // Retorna zeros para não quebrar o frontend
+    if (cacheSessoesAtivasIniciado) {
+      return computarKPIsFromCache();
+    }
+    return {
+      emEspera: 0,
+      emAtendimento: 0,
+      total: 0,
+      porEquipe: [],
+      atualizadoEm: new Date().toISOString(),
+    };
   }
-
-  const resultado: KPIsTempoReal = {
-    emEspera,
-    emAtendimento,
-    total: emEspera + emAtendimento,
-    porEquipe: Array.from(porEquipeMap.entries())
-      .map(([equipe, total]) => ({ equipe, total }))
-      .sort((a, b) => b.total - a.total),
-    atualizadoEm: new Date().toISOString(),
-  };
-
-  cacheRealtime = { data: resultado, at: agora };
-  return resultado;
 }
 
 function parseTimeWait(timeWait: string | undefined): number {
@@ -552,4 +626,5 @@ export const helenaService = {
   getClassificacoes,
   getDepartamentos,
   invalidateRealtimeCache,
+  processarWebhook,
 };
