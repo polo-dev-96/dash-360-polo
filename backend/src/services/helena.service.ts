@@ -179,7 +179,18 @@ async function getCanais(): Promise<Map<string, { name: string; number: string |
   return mapa;
 }
 
-function resolverNomeCanal(canais: Map<string, { name: string; number: string | null }>, id?: string): string {
+function resolverNomeCanal(canais: Map<string, { name: string; number: string | null }>, sessao: SessaoHelena): string {
+  const s = sessao as any;
+  // Se tivermos os detalhes do canal diretamente na sessão (via includeDetails)
+  if (s.channelDetails) {
+    const platform = s.channelDetails.platform || '';
+    const humanId = s.channelDetails.humanId || '';
+    if (platform && humanId) return `${platform} · ${humanId}`;
+    if (humanId) return humanId;
+  }
+
+  // Fallback para o cache de canais
+  const id = sessao.channelId;
   if (!id) return 'Canal desconhecido';
   const c = canais.get(id);
   if (!c) return id;
@@ -318,6 +329,17 @@ async function buscarPagina(
     }
     params.append('pageNumber', String(pageNumber));
     params.append('pageSize', String(pageSize));
+
+    // Incluir detalhes conforme visto na integração n8n para trazer as classificações
+    const details = [
+      'AgentDetails',
+      'DepartmentsDetails',
+      'ContactDetails',
+      'ChannelTypeDetails',
+      'ClassificationDetails',
+      'ChannelDetails'
+    ];
+    details.forEach(d => params.append('includeDetails', d));
 
     const url = `${BASE_URL}/session?${params.toString()}`;
     console.log(`[Helena CRM] GET ${url}`);
@@ -533,7 +555,7 @@ async function getKPIsFinalizados(filtro: FiltroHelena = {}): Promise<KPIsFinali
 
   const [departamentos, agentes, canais] = await Promise.all([getDepartamentos(), getAgentes(), getCanais()]);
   for (const sessao of sessoes) {
-    const canal = resolverNomeCanal(canais, sessao.channelId);
+    const canal = resolverNomeCanal(canais, sessao);
     porCanalMap.set(canal, (porCanalMap.get(canal) ?? 0) + 1);
 
     const agente = resolverNomeAgente(agentes, sessao.userId);
@@ -574,7 +596,7 @@ async function getSessoes(filtro: FiltroHelena = {}): Promise<SessaoHelena[]> {
 async function getClassificacoes(filtro: FiltroHelena = {}): Promise<ClassificacoesHelenaResponse> {
   // Buscar sessões COMPLETED e HIDDEN separadamente se necessário, 
   // ou buscar todas e filtrar localmente para garantir que não perdemos nada
-  console.log(`[Helena CRM] getClassificacoes iniciado para o período ${filtro.dataInicio} até ${filtro.dataFim}`);
+  console.log(`[Helena CRM] getClassificacoes iniciado. Filtro:`, JSON.stringify(filtro));
   
   const [sessoesCompleted, sessoesHidden] = await Promise.all([
     buscarTodasSessoes({ ...filtro, status: 'COMPLETED' }),
@@ -583,6 +605,14 @@ async function getClassificacoes(filtro: FiltroHelena = {}): Promise<Classificac
 
   const sessoes = [...sessoesCompleted, ...sessoesHidden];
   console.log(`[Helena CRM] getClassificacoes: ${sessoes.length} sessões finalizadas (COMPLETED=${sessoesCompleted.length}, HIDDEN=${sessoesHidden.length})`);
+
+  if (sessoes.length > 0) {
+    const statusCounts = sessoes.reduce((acc: any, s) => {
+      acc[s.status] = (acc[s.status] || 0) + 1;
+      return acc;
+    }, {});
+    console.log(`[Helena CRM] Status das sessões encontradas:`, statusCounts);
+  }
 
   const contagemCategorias = new Map<string, number>();
   const contagemPorAgente = new Map<string, Map<string, number>>();
@@ -596,8 +626,21 @@ async function getClassificacoes(filtro: FiltroHelena = {}): Promise<Classificac
   for (const sessao of sessoes) {
     // Tentar encontrar classificação em diferentes campos possíveis
     const s = sessao as any;
-    let classification = s.classification || s.tabulation || s.category;
+    let classification = s.classification || s.tabulation || s.category || s.objective;
     
+    // Tentar campos alternativos se os principais falharem
+    if (!classification) {
+      classification = s.tabulations?.[0] || s.classifications?.[0] || s.categories?.[0];
+    }
+
+    // Se ainda não encontrou, mas tem objectiveName ou tabulationName
+    if (!classification && (s.objectiveName || s.tabulationName)) {
+      classification = { 
+        categoryName: s.objectiveName || s.tabulationName,
+        categoryDescription: s.objectiveDescription || s.tabulationDescription || ''
+      };
+    }
+
     // Se não encontrou nos campos padrão, tenta procurar dentro de 'tags'
     if (!classification && s.tags && Array.isArray(s.tags) && s.tags.length > 0) {
       // Se houver tags, tenta usar a primeira tag como classificação se ela parecer uma
@@ -609,15 +652,24 @@ async function getClassificacoes(filtro: FiltroHelena = {}): Promise<Classificac
       continue;
     }
 
-    if (typeof classification !== 'object') {
-      formatosDiferentes++;
-      continue;
+    let categoria = 'Sem categoria';
+    let descricao = '';
+
+    if (typeof classification === 'string') {
+      categoria = classification;
+    } else if (typeof classification === 'object') {
+      categoria = classification.categoryName || classification.category || classification.name || classification.label || 'Sem categoria';
+      descricao = classification.categoryDescription || classification.description || '';
+      
+      // Se categoria ainda for 'Sem categoria' e o objeto tiver outros campos
+      if (categoria === 'Sem categoria' && Object.keys(classification).length > 0) {
+        // Tenta pegar o primeiro valor de string do objeto como categoria
+        const firstString = Object.values(classification).find(v => typeof v === 'string' && v.length > 2);
+        if (firstString) categoria = firstString as string;
+      }
     }
 
     comClassificacao++;
-
-    const categoria = classification.categoryName || classification.category || classification.name || 'Sem categoria';
-    const descricao = classification.categoryDescription || classification.description || '';
     const chave = descricao ? `${categoria} · ${descricao}` : categoria;
 
     contagemCategorias.set(chave, (contagemCategorias.get(chave) ?? 0) + 1);

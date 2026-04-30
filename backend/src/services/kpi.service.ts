@@ -226,6 +226,7 @@ export class KPIService {
   }
 
   async getClassificacoes(filtro: FiltroClassificacao): Promise<ClassificacaoStats[]> {
+    console.log(`[KPIService] getClassificacoes chamado para ${filtro.dataInicio} até ${filtro.dataFim}`);
     try {
       const queryTotal = `
         SELECT COUNT(*) as total
@@ -238,6 +239,7 @@ export class KPIService {
         : [filtro.dataInicio, filtro.dataFim];
       const [totalRows] = await pool.execute(queryTotal, paramsTotal);
       const totalGeral = (totalRows as any[])[0].total || 1;
+      console.log(`[KPIService] Total de atendimentos no período: ${totalGeral}`);
 
       const query = `
         SELECT 
@@ -256,14 +258,17 @@ export class KPIService {
         ? [filtro.dataInicio, filtro.dataFim, filtro.classificacao]
         : [filtro.dataInicio, filtro.dataFim];
       const [rows] = await pool.execute(query, params);
+      
+      console.log(`[KPIService] Classificações encontradas no banco: ${(rows as any[]).length}`);
+      
       if (!rows || !Array.isArray(rows)) return [];
       return (rows as any[]).map(row => ({
         classificacao: row.classificacao || 'Sem nome',
         total: row.total || 0,
         percentual: totalGeral > 0 ? Math.round((row.total / totalGeral) * 100) : 0,
       }));
-    } catch {
-      console.warn('[KPIService] Banco indisponível — retornando classificações vazias');
+    } catch (error) {
+      console.warn('[KPIService] Erro ao buscar classificações:', error);
       return [];
     }
   }
