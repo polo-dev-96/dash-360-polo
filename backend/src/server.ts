@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import kpiRoutes from './routes/kpi.routes';
 import helenaRoutes from './routes/helena.routes';
 import path from 'path';
 
@@ -14,7 +13,6 @@ app.use(cors());
 app.use(express.json());
 
 // Rotas da API
-app.use('/api/kpis', kpiRoutes);
 app.use('/api/helena', helenaRoutes);
 
 // Servir arquivos estáticos do Frontend em produção
@@ -33,7 +31,7 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
-  console.log(`📊 API de KPIs disponível em:`);
-  console.log(`   Local:   http://localhost:${PORT}/api/kpis`);
-  console.log(`   Rede:    http://192.168.0.96:${PORT}/api/kpis`);
+  console.log(`📊 API Helena disponível em:`);
+  console.log(`   Local:   http://localhost:${PORT}/api/helena`);
+  console.log(`   Rede:    http://192.168.0.96:${PORT}/api/helena`);
 });
