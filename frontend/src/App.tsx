@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useHelena } from './hooks/useHelena'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
@@ -43,9 +43,11 @@ const PAGE_TITLES: Record<string, string> = {
 function App() {
   const [activeTab, setActiveTab] = useState('monitoramento-geral')
 
+  const hoje = new Date().toISOString().split('T')[0]
+
   // Filtros do Monitoramento Geral (Helena CRM)
-  const [helenaDataInicio, setHelenaDataInicio] = useState<string>('')
-  const [helenaDataFim, setHelenaDataFim] = useState<string>('')
+  const [helenaDataInicio, setHelenaDataInicio] = useState<string>(hoje)
+  const [helenaDataFim, setHelenaDataFim] = useState<string>(hoje)
 
   // Filtros de Classificações Helena
   const [helenaClassDataInicio, setHelenaClassDataInicio] = useState<string>('')
@@ -67,6 +69,12 @@ function App() {
     fetchFinalizados,
     fetchClassificacoes: fetchClassificacoesHelena,
   } = useHelena()
+
+  // Carrega atendimentos finalizados do dia automaticamente ao abrir
+  useEffect(() => {
+    fetchFinalizados(helenaDataInicio, helenaDataFim)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
