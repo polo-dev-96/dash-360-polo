@@ -1,6 +1,6 @@
 import { KPIOverview, TimelineData, EquipeStats, AgenteStats, CanalStats, FiltroData, PicoHorarioData, ClassificacaoStats, ClassificacaoPorAgente, FiltroClassificacao, KPIsTempoReal, KPIsFinalizadosHelena, ClassificacoesHelenaResponse } from '../types';
 
-const API_URL = '/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 function buildQueryString(filtro: FiltroData): string {
   const params = new URLSearchParams();

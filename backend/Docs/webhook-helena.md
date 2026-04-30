@@ -46,7 +46,7 @@ npm run dev
 
 ### Passo 3 — Iniciar o túnel (em outro terminal)
 ```powershell
-cloudflared tunnel --url http://localhost:3001
+cloudflared tunnel --url http://localhost:3003
 ```
 
 O terminal exibirá uma URL pública temporária, exemplo:

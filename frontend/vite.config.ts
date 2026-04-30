@@ -15,9 +15,13 @@ export default defineConfig({
     allowedHosts: ['192.168.0.96', 'localhost'],
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://localhost:3003',
         changeOrigin: true,
       },
     },
+  },
+  preview: {
+    port: 3004,
+    host: '0.0.0.0',
   },
 })
