@@ -131,6 +131,17 @@ router.get('/sessoes', async (req: Request, res: Response) => {
   }
 });
 
+router.get('/agentes', async (req: Request, res: Response) => {
+  try {
+    const filtro = getFiltroHelenaFromQuery(req);
+    const data = await helenaService.getAgentesPerformance(filtro);
+    res.json(data);
+  } catch (error) {
+    console.warn('[HelenaRoutes] Erro ao buscar desempenho por agente:', error);
+    res.json([]);
+  }
+});
+
 router.get('/classificacoes', async (req: Request, res: Response) => {
   try {
     const filtro = getFiltroHelenaFromQuery(req);

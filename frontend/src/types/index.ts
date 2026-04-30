@@ -105,6 +105,17 @@ export interface ClassificacaoHelenaPorAgente {
   total: number;
 }
 
+export interface AgentePerformanceHelena {
+  agente: string;
+  total: number;
+  tempoEsperaMedioSegundos: number;
+  tempoEsperaMedioFormatado: string;
+  tempoAtendimentoMedioSegundos: number;
+  tempoAtendimentoMedioFormatado: string;
+  tempoPrimeiraRespostaMedioSegundos: number;
+  tempoPrimeiraRespostaMedioFormatado: string;
+}
+
 export interface ClassificacoesHelenaResponse {
   total: number;
   totalFinalizados: number;

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useHelena } from './hooks/useHelena'
+import { useHelenaAgentes } from './hooks/useHelenaAgentes'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import {
@@ -25,6 +26,7 @@ import {
   Hourglass,
   AlertCircle,
   CheckSquare2,
+  BarChart3,
 } from 'lucide-react'
 import logo from './logos/Logo Login 64x64.png'
 
@@ -32,12 +34,14 @@ const COLORS = ['#dc2626', '#6b7280', '#b91c1c', '#374151', '#ef4444', '#9ca3af'
 
 const NAV_ITEMS = [
   { id: 'monitoramento-geral',  label: 'Monitoramento Geral',  icon: Activity },
+  { id: 'desempenho-agentes',  label: 'Desempenho Agentes',  icon: BarChart3 },
   { id: 'classificacoes-helena', label: 'Classificações Helena', icon: Tag },
 ]
 
 const PAGE_TITLES: Record<string, string> = {
   'classificacoes-helena': 'Classificações Helena',
   'monitoramento-geral':  'Monitoramento Geral',
+  'desempenho-agentes':   'Desempenho Agentes',
 }
 
 function App() {
@@ -52,6 +56,10 @@ function App() {
   // Filtros de Classificações Helena
   const [helenaClassDataInicio, setHelenaClassDataInicio] = useState<string>('')
   const [helenaClassDataFim, setHelenaClassDataFim] = useState<string>('')
+
+  // Filtros de Desempenho Agentes
+  const [agentesDataInicio, setAgentesDataInicio] = useState<string>(hoje)
+  const [agentesDataFim, setAgentesDataFim] = useState<string>(hoje)
 
   const {
     realtime,
@@ -69,6 +77,14 @@ function App() {
     fetchFinalizados,
     fetchClassificacoes: fetchClassificacoesHelena,
   } = useHelena()
+
+  const {
+    agentes: agentesPerformance,
+    loading: loadingAgentes,
+    error: errorAgentes,
+    pesquisado: pesquisadoAgentes,
+    fetchAgentes,
+  } = useHelenaAgentes()
 
   // Carrega atendimentos finalizados do dia automaticamente ao abrir
   useEffect(() => {
@@ -418,6 +434,112 @@ function App() {
                 )}
               </div>
 
+            </div>
+          )}
+
+          {/* ── Desempenho Agentes ── */}
+          {activeTab === 'desempenho-agentes' && (
+            <div className="space-y-6">
+              <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-gray-600">De:</span>
+                    <input
+                      type="date"
+                      value={agentesDataInicio}
+                      onChange={(e) => setAgentesDataInicio(e.target.value)}
+                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-gray-600">Até:</span>
+                    <input
+                      type="date"
+                      value={agentesDataFim}
+                      onChange={(e) => setAgentesDataFim(e.target.value)}
+                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                  </div>
+                  <button
+                    onClick={() => fetchAgentes(agentesDataInicio, agentesDataFim)}
+                    disabled={!agentesDataInicio || !agentesDataFim || loadingAgentes}
+                    className="px-5 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors"
+                  >
+                    {loadingAgentes ? 'Buscando...' : 'Pesquisar'}
+                  </button>
+                  {pesquisadoAgentes && agentesDataInicio && agentesDataFim && (
+                    <span className="text-xs text-gray-500 font-medium">
+                      {format(new Date(agentesDataInicio + 'T00:00:00'), 'dd/MM/yyyy', { locale: ptBR })} até {format(new Date(agentesDataFim + 'T00:00:00'), 'dd/MM/yyyy', { locale: ptBR })}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {!pesquisadoAgentes ? (
+                <div className="flex flex-col items-center justify-center h-40 text-gray-400 gap-2">
+                  <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-1">
+                    <Clock className="w-6 h-6 text-gray-400" />
+                  </div>
+                  <p className="text-base font-medium">Nenhum período selecionado</p>
+                  <p className="text-sm">Selecione um período e clique em <span className="font-semibold text-red-600">Pesquisar</span></p>
+                </div>
+              ) : errorAgentes ? (
+                <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>{errorAgentes}</span>
+                </div>
+              ) : (
+                <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                  <div className="px-6 py-5 border-b border-gray-200">
+                    <h2 className="text-base font-bold text-gray-900">Qualidade do atendimento por agente</h2>
+                    <p className="text-xs text-gray-500 mt-1">Foram considerados atendimentos finalizados no período selecionado.</p>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Agente</th>
+                          <th className="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Atendimentos Concluídos</th>
+                          <th className="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Média de Espera</th>
+                          <th className="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Primeira Resposta</th>
+                          <th className="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Tempo de Atendimento</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {loadingAgentes ? (
+                          <tr>
+                            <td colSpan={5} className="px-6 py-8 text-center text-gray-400">Carregando...</td>
+                          </tr>
+                        ) : agentesPerformance.length > 0 ? (
+                          agentesPerformance.map((item, index) => (
+                            <tr key={index} className="hover:bg-gray-50 transition-colors">
+                              <td className="px-6 py-4">
+                                <div className="flex items-center gap-3">
+                                  <img
+                                    src={`https://api.dicebear.com/8.x/avataaars/svg?seed=${encodeURIComponent(item.agente)}&backgroundColor=fecaca,fed7aa,bbf7d0,bfdbfe,e9d5ff`}
+                                    alt={item.agente}
+                                    className="w-8 h-8 rounded-full border border-gray-200 bg-gray-100 flex-shrink-0"
+                                  />
+                                  <span className="font-medium text-gray-900">{item.agente}</span>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 text-right font-bold text-gray-900">{item.total.toLocaleString('pt-BR')}</td>
+                              <td className="px-6 py-4 text-right text-gray-600">{item.tempoEsperaMedioFormatado}</td>
+                              <td className="px-6 py-4 text-right text-gray-600">{item.tempoPrimeiraRespostaMedioFormatado}</td>
+                              <td className="px-6 py-4 text-right text-gray-600">{item.tempoAtendimentoMedioFormatado}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={5} className="px-6 py-8 text-center text-gray-400">Sem dados para o período selecionado</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

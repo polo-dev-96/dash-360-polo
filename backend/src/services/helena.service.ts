@@ -10,6 +10,7 @@ import {
   ClassificacoesHelenaResponse,
   ClassificacaoHelena,
   ClassificacaoHelenaPorAgente,
+  AgentePerformanceHelena,
 } from '../types/helena.types';
 
 const BASE_URL = 'https://api.wts.chat/chat/v2';
@@ -582,6 +583,88 @@ async function getKPIsFinalizados(filtro: FiltroHelena = {}): Promise<KPIsFinali
   };
 }
 
+async function getAgentesPerformance(filtro: FiltroHelena = {}): Promise<AgentePerformanceHelena[]> {
+  console.log(`[Helena CRM] getAgentesPerformance iniciado. Filtro:`, JSON.stringify(filtro));
+
+  const [sessoesCompleted, sessoesHidden] = await Promise.all([
+    buscarTodasSessoes({ ...filtro, status: 'COMPLETED' }),
+    buscarTodasSessoes({ ...filtro, status: 'HIDDEN' })
+  ]);
+
+  const sessoes = [...sessoesCompleted, ...sessoesHidden];
+  console.log(`[Helena CRM] getAgentesPerformance: ${sessoes.length} sessões finalizadas`);
+
+  const MAX_TEMPO_ATENDIMENTO_S = 8 * 3600;
+  const MAX_TEMPO_ESPERA_S = 2 * 3600;
+
+  const agentes = await getAgentes();
+  const departamentos = await getDepartamentos();
+
+  const statsMap = new Map<string, {
+    total: number;
+    temposEspera: number[];
+    temposAtendimento: number[];
+    temposPrimeiraResposta: number[];
+  }>();
+
+  for (const sessao of sessoes) {
+    const nomeAgente = resolverNomeAgente(agentes, sessao.userId);
+
+    if (!statsMap.has(nomeAgente)) {
+      statsMap.set(nomeAgente, { total: 0, temposEspera: [], temposAtendimento: [], temposPrimeiraResposta: [] });
+    }
+
+    const stats = statsMap.get(nomeAgente)!;
+    stats.total += 1;
+
+    const tempoEspera = calcWaitSeconds(sessao);
+    if (tempoEspera > 0 && tempoEspera <= MAX_TEMPO_ESPERA_S) {
+      stats.temposEspera.push(tempoEspera);
+    }
+
+    const tempoAtendimento = calcServiceSeconds(sessao);
+    if (tempoAtendimento > 0 && tempoAtendimento <= MAX_TEMPO_ATENDIMENTO_S) {
+      stats.temposAtendimento.push(tempoAtendimento);
+    }
+
+    // Tempo até primeira resposta do agente: startAt - createdAt
+    if (sessao.createdAt && sessao.startAt) {
+      const primeiraResposta = Math.max(0, (new Date(sessao.startAt).getTime() - new Date(sessao.createdAt).getTime()) / 1000);
+      if (primeiraResposta > 0 && primeiraResposta <= MAX_TEMPO_ESPERA_S) {
+        stats.temposPrimeiraResposta.push(primeiraResposta);
+      }
+    }
+  }
+
+  const resultado: AgentePerformanceHelena[] = [];
+  for (const [agente, stats] of statsMap.entries()) {
+    const tempoEsperaMedio = stats.temposEspera.length > 0
+      ? Math.round(stats.temposEspera.reduce((a, b) => a + b, 0) / stats.temposEspera.length)
+      : 0;
+
+    const tempoAtendimentoMedio = stats.temposAtendimento.length > 0
+      ? Math.round(stats.temposAtendimento.reduce((a, b) => a + b, 0) / stats.temposAtendimento.length)
+      : 0;
+
+    const tempoPrimeiraRespostaMedio = stats.temposPrimeiraResposta.length > 0
+      ? Math.round(stats.temposPrimeiraResposta.reduce((a, b) => a + b, 0) / stats.temposPrimeiraResposta.length)
+      : 0;
+
+    resultado.push({
+      agente,
+      total: stats.total,
+      tempoEsperaMedioSegundos: tempoEsperaMedio,
+      tempoEsperaMedioFormatado: formatarTempo(tempoEsperaMedio),
+      tempoAtendimentoMedioSegundos: tempoAtendimentoMedio,
+      tempoAtendimentoMedioFormatado: formatarTempo(tempoAtendimentoMedio),
+      tempoPrimeiraRespostaMedioSegundos: tempoPrimeiraRespostaMedio,
+      tempoPrimeiraRespostaMedioFormatado: formatarTempo(tempoPrimeiraRespostaMedio),
+    });
+  }
+
+  return resultado.sort((a, b) => b.total - a.total);
+}
+
 async function getSessoes(filtro: FiltroHelena = {}): Promise<SessaoHelena[]> {
   if (!filtro.status) {
     const [completed, hidden] = await Promise.all([
@@ -721,6 +804,7 @@ function invalidateRealtimeCache(): void {
 export const helenaService = {
   getKPIsTempoReal,
   getKPIsFinalizados,
+  getAgentesPerformance,
   getSessoes,
   getClassificacoes,
   getDepartamentos,

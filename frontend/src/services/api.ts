@@ -1,4 +1,4 @@
-import { KPIOverview, TimelineData, EquipeStats, AgenteStats, CanalStats, FiltroData, PicoHorarioData, ClassificacaoStats, ClassificacaoPorAgente, FiltroClassificacao, KPIsTempoReal, KPIsFinalizadosHelena, ClassificacoesHelenaResponse } from '../types';
+import { KPIOverview, TimelineData, EquipeStats, AgenteStats, CanalStats, FiltroData, PicoHorarioData, ClassificacaoStats, ClassificacaoPorAgente, FiltroClassificacao, KPIsTempoReal, KPIsFinalizadosHelena, ClassificacoesHelenaResponse, AgentePerformanceHelena } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -94,6 +94,13 @@ export const api = {
     const params = new URLSearchParams({ dataInicio, dataFim });
     const response = await fetch(`${API_URL}/helena/classificacoes?${params}`);
     if (!response.ok) throw new Error('Erro ao buscar classificações da Helena');
+    return response.json();
+  },
+
+  async getHelenaAgentes(dataInicio: string, dataFim: string): Promise<AgentePerformanceHelena[]> {
+    const params = new URLSearchParams({ dataInicio, dataFim });
+    const response = await fetch(`${API_URL}/helena/agentes?${params}`);
+    if (!response.ok) throw new Error('Erro ao buscar desempenho dos agentes');
     return response.json();
   },
 };
