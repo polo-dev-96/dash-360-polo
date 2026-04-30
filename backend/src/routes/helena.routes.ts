@@ -88,9 +88,14 @@ router.get('/realtime', async (_req: Request, res: Response) => {
     const data = await helenaService.getKPIsTempoReal();
     res.json(data);
   } catch (error) {
-    console.error('Erro ao buscar KPIs em tempo real da Helena CRM:', error);
-    const mensagem = error instanceof Error ? error.message : 'Erro desconhecido';
-    res.status(500).json({ error: 'Erro ao buscar KPIs em tempo real', detalhe: mensagem });
+    console.warn('[HelenaRoutes] Erro ao buscar KPIs em tempo real (token offline?):', error);
+    res.json({
+      emEspera: 0,
+      emAtendimento: 0,
+      total: 0,
+      porEquipe: [],
+      atualizadoEm: new Date().toISOString(),
+    });
   }
 });
 
@@ -100,9 +105,18 @@ router.get('/finalizados', async (req: Request, res: Response) => {
     const data = await helenaService.getKPIsFinalizados(filtro);
     res.json(data);
   } catch (error) {
-    console.error('Erro ao buscar atendimentos finalizados da Helena CRM:', error);
-    const mensagem = error instanceof Error ? error.message : 'Erro desconhecido';
-    res.status(500).json({ error: 'Erro ao buscar atendimentos finalizados', detalhe: mensagem });
+    console.warn('[HelenaRoutes] Erro ao buscar atendimentos finalizados:', error);
+    res.json({
+      total: 0,
+      sessoesFinalizadas: [],
+      tempoEsperaMedioSegundos: 0,
+      tempoAtendimentoMedioSegundos: 0,
+      tempoEsperaFormatado: '0s',
+      tempoAtendimentoFormatado: '0s',
+      porCanal: [],
+      porAgente: [],
+      porEquipe: [],
+    });
   }
 });
 
@@ -112,9 +126,8 @@ router.get('/sessoes', async (req: Request, res: Response) => {
     const data = await helenaService.getSessoes(filtro);
     res.json(data);
   } catch (error) {
-    console.error('Erro ao buscar sessões da Helena CRM:', error);
-    const mensagem = error instanceof Error ? error.message : 'Erro desconhecido';
-    res.status(500).json({ error: 'Erro ao buscar sessões', detalhe: mensagem });
+    console.warn('[HelenaRoutes] Erro ao buscar sessões:', error);
+    res.json([]);
   }
 });
 
@@ -124,9 +137,13 @@ router.get('/classificacoes', async (req: Request, res: Response) => {
     const data = await helenaService.getClassificacoes(filtro);
     res.json(data);
   } catch (error) {
-    console.error('Erro ao buscar classificações da Helena CRM:', error);
-    const mensagem = error instanceof Error ? error.message : 'Erro desconhecido';
-    res.status(500).json({ error: 'Erro ao buscar classificações', detalhe: mensagem });
+    console.warn('[HelenaRoutes] Erro ao buscar classificações:', error);
+    res.json({
+      total: 0,
+      totalFinalizados: 0,
+      classificacoes: [],
+      porAgente: [],
+    });
   }
 });
 
@@ -137,9 +154,8 @@ router.get('/departamentos', async (_req: Request, res: Response) => {
     const lista = Array.from(mapa.entries()).map(([id, name]) => ({ id, name }));
     res.json(lista);
   } catch (error) {
-    console.error('Erro ao buscar departamentos da Helena CRM:', error);
-    const mensagem = error instanceof Error ? error.message : 'Erro desconhecido';
-    res.status(500).json({ error: 'Erro ao buscar departamentos', detalhe: mensagem });
+    console.warn('[HelenaRoutes] Erro ao buscar departamentos:', error);
+    res.json([]);
   }
 });
 

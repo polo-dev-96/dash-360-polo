@@ -485,9 +485,15 @@ function calcServiceSeconds(s: SessaoHelena): number {
 }
 
 async function getKPIsFinalizados(filtro: FiltroHelena = {}): Promise<KPIsFinalizados> {
-  console.log(`[Helena CRM] getKPIsFinalizados chamado com: status=COMPLETED, dataInicio=${filtro.dataInicio}, dataFim=${filtro.dataFim}`);
-  const sessoes = await buscarTodasSessoes({ ...filtro, status: 'COMPLETED' });
-  console.log(`[Helena CRM] Total sessões finalizadas retornadas: ${sessoes.length}`);
+  console.log(`[Helena CRM] getKPIsFinalizados chamado para o período ${filtro.dataInicio} até ${filtro.dataFim}`);
+  
+  const [sessoesCompleted, sessoesHidden] = await Promise.all([
+    buscarTodasSessoes({ ...filtro, status: 'COMPLETED' }),
+    buscarTodasSessoes({ ...filtro, status: 'HIDDEN' })
+  ]);
+
+  const sessoes = [...sessoesCompleted, ...sessoesHidden];
+  console.log(`[Helena CRM] Total sessões finalizadas (COMPLETED=${sessoesCompleted.length}, HIDDEN=${sessoesHidden.length}): ${sessoes.length}`);
   // DEBUG: verificar campos timeWait/timeService
   const comTimeWait = sessoes.filter(s => s.timeWait).length;
   const comTimeService = sessoes.filter(s => s.timeService).length;
@@ -555,12 +561,28 @@ async function getKPIsFinalizados(filtro: FiltroHelena = {}): Promise<KPIsFinali
 }
 
 async function getSessoes(filtro: FiltroHelena = {}): Promise<SessaoHelena[]> {
+  if (!filtro.status) {
+    const [completed, hidden] = await Promise.all([
+      buscarTodasSessoes({ ...filtro, status: 'COMPLETED' }),
+      buscarTodasSessoes({ ...filtro, status: 'HIDDEN' })
+    ]);
+    return [...completed, ...hidden];
+  }
   return buscarTodasSessoes(filtro);
 }
 
 async function getClassificacoes(filtro: FiltroHelena = {}): Promise<ClassificacoesHelenaResponse> {
-  const sessoes = await buscarTodasSessoes({ ...filtro, status: 'COMPLETED' });
-  console.log(`[Helena CRM] getClassificacoes: ${sessoes.length} sessões finalizadas analisadas`);
+  // Buscar sessões COMPLETED e HIDDEN separadamente se necessário, 
+  // ou buscar todas e filtrar localmente para garantir que não perdemos nada
+  console.log(`[Helena CRM] getClassificacoes iniciado para o período ${filtro.dataInicio} até ${filtro.dataFim}`);
+  
+  const [sessoesCompleted, sessoesHidden] = await Promise.all([
+    buscarTodasSessoes({ ...filtro, status: 'COMPLETED' }),
+    buscarTodasSessoes({ ...filtro, status: 'HIDDEN' })
+  ]);
+
+  const sessoes = [...sessoesCompleted, ...sessoesHidden];
+  console.log(`[Helena CRM] getClassificacoes: ${sessoes.length} sessões finalizadas (COMPLETED=${sessoesCompleted.length}, HIDDEN=${sessoesHidden.length})`);
 
   const contagemCategorias = new Map<string, number>();
   const contagemPorAgente = new Map<string, Map<string, number>>();
@@ -568,13 +590,34 @@ async function getClassificacoes(filtro: FiltroHelena = {}): Promise<Classificac
   const agentes = await getAgentes();
 
   let comClassificacao = 0;
+  let semClassificacao = 0;
+  let formatosDiferentes = 0;
+
   for (const sessao of sessoes) {
-    const classification = (sessao as any).classification;
-    if (!classification || typeof classification !== 'object') continue;
+    // Tentar encontrar classificação em diferentes campos possíveis
+    const s = sessao as any;
+    let classification = s.classification || s.tabulation || s.category;
+    
+    // Se não encontrou nos campos padrão, tenta procurar dentro de 'tags'
+    if (!classification && s.tags && Array.isArray(s.tags) && s.tags.length > 0) {
+      // Se houver tags, tenta usar a primeira tag como classificação se ela parecer uma
+      classification = { categoryName: 'Tags', categoryDescription: s.tags.join(', ') };
+    }
+
+    if (!classification) {
+      semClassificacao++;
+      continue;
+    }
+
+    if (typeof classification !== 'object') {
+      formatosDiferentes++;
+      continue;
+    }
+
     comClassificacao++;
 
-    const categoria = classification.categoryName || classification.category || 'Sem categoria';
-    const descricao = classification.categoryDescription || '';
+    const categoria = classification.categoryName || classification.category || classification.name || 'Sem categoria';
+    const descricao = classification.categoryDescription || classification.description || '';
     const chave = descricao ? `${categoria} · ${descricao}` : categoria;
 
     contagemCategorias.set(chave, (contagemCategorias.get(chave) ?? 0) + 1);
@@ -587,7 +630,11 @@ async function getClassificacoes(filtro: FiltroHelena = {}): Promise<Classificac
     mapaAgente.set(chave, (mapaAgente.get(chave) ?? 0) + 1);
   }
 
-  console.log(`[Helena CRM] getClassificacoes: ${comClassificacao} sessões com classificação`);
+  console.log(`[Helena CRM] Resultado getClassificacoes:`);
+  console.log(`  - Total analisado: ${sessoes.length}`);
+  console.log(`  - Com classificação: ${comClassificacao}`);
+  console.log(`  - Sem classificação: ${semClassificacao}`);
+  if (formatosDiferentes > 0) console.log(`  - Formatos inválidos: ${formatosDiferentes}`);
 
   const totalClassificados = Array.from(contagemCategorias.values()).reduce((a, b) => a + b, 0);
 
